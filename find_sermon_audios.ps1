@@ -173,10 +173,28 @@ foreach ($file in $sortedFileDetails) {
     $line | Out-File -FilePath $OutputFile -Append
 }
 Write-Output "Scan complete. Check '$OutputFile' for the results."
+
+# Count the number of lines in the output file
+[int]$lineCount = (Get-Content -Path $OutputFile).Count - 1
+
+# Construct the new file name with the line count
+[string]$NewOutputFile = Join-Path -Path $OutputFolder -ChildPath "$DriveNames ($SafeDescriptor) [$lineCount files] $timestamp.txt" 
+
+# Generate the Excel file using the new file name directly
+[string]$NewExcelFile = [System.IO.Path]::ChangeExtension($NewOutputFile, ".xlsx")
+Import-Csv -Path $OutputFile | Export-Excel -Path $NewExcelFile
+
+# Rename the text file after creating the Excel file
+Rename-Item -Path $OutputFile -NewName $NewOutputFile
+
+# Correctly display the new file path in the console
+Write-Output "Files renamed to include line count and Excel file created."
+Write-Output "Text file location: $NewOutputFile"
+Write-Output "Excel file location: $NewExcelFile"
 #endregion
 
-#region Convert to Excel
-$ExcelFile = [System.IO.Path]::ChangeExtension($OutputFile, ".xlsx")
-Import-Csv $OutputFile | Export-Excel -Path $ExcelFile
-Write-Output "Excel file created. Check '$ExcelFile' for the results."
-#endregion
+# #region Convert to Excel
+# $ExcelFile = [System.IO.Path]::ChangeExtension($OutputFile, ".xlsx")
+# Import-Csv $OutputFile | Export-Excel -Path $ExcelFile
+# Write-Output "Excel file created. Check '$ExcelFile' for the results."
+# #endregion
