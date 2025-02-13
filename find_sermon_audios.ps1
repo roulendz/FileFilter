@@ -1,102 +1,96 @@
 #region Check for ImportExcel module and import it if available
-# Check if the ImportExcel module is installed
 if (-not (Get-Module -ListAvailable -Name ImportExcel)) {
-    Write-Host "The ImportExcel module is not installed." # Inform the user that the module is missing
-    Write-Host "Please install it with the following command:" # Instruct the user how to install the module
-    Write-Host "    Install-Module ImportExcel -Scope CurrentUser" # Provide the installation command
-    return # Exit the script if the module is not installed
+    Write-Host "The ImportExcel module is not installed."
+    Write-Host "Please install it with the following command:"
+    Write-Host "    Install-Module ImportExcel -Scope CurrentUser"
+    return
 } else {
-    Import-Module ImportExcel # Import the module if it is installed
+    Import-Module ImportExcel
 }
 #endregion
 
-#region Define Show-Menu function for interactive menu selection
+#region Updated Show-Menu function with optional default selection
 function Show-Menu {
     param (
-        [string]$Title,           # Title to display on the menu
-        [string[]]$Options        # Array of options to display in the menu
+        [string]$Title,
+        [string[]]$Options,
+        [bool]$AllowMultiple = $false,
+        [int]$DefaultIndex = 0
     )
-    $selectedIndex = 0           # Initialize the selected index to 0
-    $key = $null                 # Initialize the key variable
+    $selectedIndexes = @()
+    if ($AllowMultiple -and $Options.Length -gt 0) {
+        $selectedIndexes = @($DefaultIndex)  # Preselect the first drive
+    } elseif (-not $AllowMultiple) {
+        $selectedIndexes = @($DefaultIndex) # Preselect single default option
+    }
+
+    $currentIndex = if ($Options.Length -gt 0) { $DefaultIndex } else { 0 }
+    $key = $null
 
     do {
-        Clear-Host              # Clear the host screen for a fresh menu display
-        Write-Host $Title       # Display the menu title
+        Clear-Host
+        Write-Host $Title
 
         for ($i = 0; $i -lt $Options.Length; $i++) {
-            if ($i -eq $selectedIndex) {
-                Write-Host "> $($Options[$i])" -ForegroundColor Cyan # Highlight the currently selected option
+            $prefix = if ($selectedIndexes -contains $i) { "[X]" } else { "[ ]" }
+            if ($i -eq $currentIndex) {
+                Write-Host "> $prefix $($Options[$i])" -ForegroundColor Cyan
             } else {
-                Write-Host "  $($Options[$i])" # Display unselected options
+                Write-Host "  $prefix $($Options[$i])"
             }
         }
 
-        $key = $host.UI.RawUI.ReadKey("NoEcho,IncludeKeyDown") # Read user key input without echoing it
+        Write-Host "`nUse Up/Down to navigate, Space to select, Enter to confirm."
+
+        $key = $host.UI.RawUI.ReadKey("NoEcho,IncludeKeyDown")
 
         switch ($key.VirtualKeyCode) {
-            38 { if ($selectedIndex -gt 0) { $selectedIndex-- } }  # Up arrow key: decrease index if not at the top
-            40 { if ($selectedIndex -lt $Options.Length - 1) { $selectedIndex++ } }  # Down arrow key: increase index if not at the bottom
-            13 { break }  # Enter key: break the loop to select the option
+            38 { if ($currentIndex -gt 0) { $currentIndex-- } }
+            40 { if ($currentIndex -lt $Options.Length - 1) { $currentIndex++ } }
+            32 {
+                if ($AllowMultiple) {
+                    if ($selectedIndexes -contains $currentIndex) {
+                        $selectedIndexes = $selectedIndexes -ne $currentIndex
+                    } else {
+                        $selectedIndexes += $currentIndex
+                    }
+                } else {
+                    $selectedIndexes = @($currentIndex)
+                }
+            }
+            13 { break }
         }
-    } while ($key.VirtualKeyCode -ne 13) # Continue loop until Enter is pressed
+    } while ($key.VirtualKeyCode -ne 13)
 
-    return $Options[$selectedIndex] # Return the selected option
-}
-#endregion
-
-#region Define Get-VariantRegex function to create regex pattern with diacritical variants
-function Get-VariantRegex {
-    param (
-        [string]$inputString  # The input search string from the user
-    )
-    $pattern = ""
-    foreach ($char in $inputString.ToCharArray()) {
-        switch ($char) {
-            'a' { $pattern += "[aā]" }
-            'A' { $pattern += "[AĀ]" }
-            'c' { $pattern += "[cč]" }
-            'C' { $pattern += "[CČ]" }
-            'e' { $pattern += "[eē]" }
-            'E' { $pattern += "[EĒ]" }
-            'g' { $pattern += "[gģ]" }
-            'G' { $pattern += "[GĢ]" }
-            'i' { $pattern += "[iī]" }
-            'I' { $pattern += "[IĪ]" }
-            'k' { $pattern += "[kķ]" }
-            'K' { $pattern += "[KĶ]" }
-            'l' { $pattern += "[lļ]" }
-            'L' { $pattern += "[LĻ]" }
-            'n' { $pattern += "[nņ]" }
-            'N' { $pattern += "[NŅ]" }
-            's' { $pattern += "[sš]" }
-            'S' { $pattern += "[SŠ]" }
-            'u' { $pattern += "[uū]" }
-            'U' { $pattern += "[UŪ]" }
-            'z' { $pattern += "[zž]" }
-            'Z' { $pattern += "[ZŽ]" }
-            default { $pattern += [regex]::Escape($char) }
-        }
-    }
-    return "(?i)$pattern"  # Add case-insensitive flag
+    return $selectedIndexes | ForEach-Object { $Options[$_] }
 }
 #endregion
 
 
-#region Select drive to scan for files
+#region Select drives to scan for files
 $drives = Get-PSDrive -PSProvider FileSystem | Select-Object -ExpandProperty Root
-$Drive = Show-Menu -Title 'Select a Drive to scan for .wav and .mp3 files' -Options $drives
+$SelectedDrives = Show-Menu -Title 'Select Drives to scan for .wav and .mp3 files (use Space to select multiple)' -Options $drives -AllowMultiple $true -DefaultIndex 0
+if (-not $SelectedDrives) {
+    Write-Error "No drives selected. Exiting script."
+    exit
+}
 #endregion
 
-#region Select search option (by day or by filename) and get corresponding search criteria
+#region Select search option (by day or by filename)
 $SearchOptions = @("Search by Day", "Search by File Name")
-$SearchOption = Show-Menu -Title 'Select Search Option' -Options $SearchOptions
+$defaultIndex = 1  # Set default selection to "Search by File Name"
+$SearchOption = Show-Menu -Title 'Select Search Option (only one)' -Options $SearchOptions -AllowMultiple $false -DefaultIndex $defaultIndex
+if (-not $SearchOption) {
+    $SearchOption = $SearchOptions[$defaultIndex]
+}
+
 
 [string]$DayOfWeek = $null
 [string]$SearchText = $null
 
 if ($SearchOption -eq "Search by Day") {
     $DaysOfWeek = [System.Enum]::GetNames([System.DayOfWeek])
-    $DayOfWeek = Show-Menu -Title 'Select a Day of The Week' -Options $DaysOfWeek
+    $DayOfWeek = Show-Menu -Title 'Select a Day of The Week' -Options $DaysOfWeek -AllowMultiple $false
     if (-not $DayOfWeek) {
         Write-Error "No day selected. Exiting script."
         exit
@@ -117,21 +111,14 @@ if (-not (Test-Path -Path $OutputFolder)) {
     New-Item -ItemType Directory -Path $OutputFolder | Out-Null
 }
 
-# Determine search descriptor based on search type
-[string]$SearchDescriptor = if ($SearchOption -eq "Search by Day") {
-    $DayOfWeek
-} else {
-    $SearchText
-}
-
-# Remove invalid file name characters
-$SafeDescriptor = [regex]::Replace($SearchDescriptor, '[\\\/\:\*\?\"\<\>\|]', '_')
-
-# Prepare file name with descriptor
-$DriveName = $Drive.Substring(0, $Drive.Length - 2)
+[string]$SearchDescriptor = if ($SearchOption -eq "Search by Day") { $DayOfWeek } else { $SearchText }
+$SafeDescriptor = [regex]::Replace($SearchDescriptor, '[\\/:*?"<>|]', '_')
+$DriveNames = ($SelectedDrives -join "_").TrimEnd('\')
+$DriveNames = [regex]::Replace($DriveNames, '[\\/:*?"<>|]', '_')
 $timestamp = Get-Date -Format "yyyy-MM-dd_HH-mm-ss"
-$OutputFile = Join-Path -Path $OutputFolder -ChildPath "$DriveName ($SafeDescriptor) $timestamp.txt"
+$OutputFile = Join-Path -Path $OutputFolder -ChildPath "$DriveNames ($SafeDescriptor) $timestamp.txt"
 #endregion
+
 
 #region Initialize the output file with header line
 "Day,FileName,DateCreated,DateModified,DateLastAccessed,Path" | Out-File -FilePath $OutputFile
@@ -142,36 +129,26 @@ $OutputFile = Join-Path -Path $OutputFolder -ChildPath "$DriveName ($SafeDescrip
 #endregion
 
 #region Collect file details
-$fileDetails = Get-ChildItem -Path "$Drive" -Include *.wav,*.mp3 -Recurse -ErrorAction SilentlyContinue | ForEach-Object {
-    $dayFromName = if ($_.Name -match "^(\d{4}-\d{2}-\d{2})\s") {
-        [datetime]::ParseExact($matches[1], 'yyyy-MM-dd', [System.Globalization.CultureInfo]::InvariantCulture).ToString("dddd", [System.Globalization.CultureInfo]::GetCultureInfo("lv-LV"))
-    } else {
-        "Unknown"
+$fileDetails = @()
+foreach ($Drive in $SelectedDrives) {
+    $fileDetails += Get-ChildItem -Path "$Drive" -Include *.wav,*.mp3 -Recurse -ErrorAction SilentlyContinue | ForEach-Object {
+        $dayFromName = if ($_.Name -match "^(\d{4}-\d{2}-\d{2})\s") {
+            [datetime]::ParseExact($matches[1], 'yyyy-MM-dd', [System.Globalization.CultureInfo]::InvariantCulture).ToString("dddd", [System.Globalization.CultureInfo]::GetCultureInfo("lv-LV"))
+        } else {
+            "Unknown"
+        }
+        [PSCustomObject]@{
+            Day = $dayFromName
+            Name = $_.Name
+            CreationTime = $_.CreationTime
+            LastWriteTime = $_.LastWriteTime
+            LastAccessTime = $_.LastAccessTime
+            FullName = $_.FullName
+            FormattedCreationTime = $_.CreationTime.ToString("yyyy-MM-ddTHH:mm:ss (dddd)")
+            FormattedLastWriteTime = $_.LastWriteTime.ToString("yyyy-MM-ddTHH:mm:ss (dddd)")
+            FormattedLastAccessTime = $_.LastAccessTime.ToString("yyyy-MM-ddTHH:mm:ss (dddd)")
+        }
     }
-    [PSCustomObject]@{
-        Day = $dayFromName
-        Name = $_.Name
-        CreationTime = $_.CreationTime
-        LastWriteTime = $_.LastWriteTime
-        LastAccessTime = $_.LastAccessTime
-        FullName = $_.FullName
-        FormattedCreationTime = $_.CreationTime.ToString("yyyy-MM-ddTHH:mm:ss (dddd)")
-        FormattedLastWriteTime = $_.LastWriteTime.ToString("yyyy-MM-ddTHH:mm:ss (dddd)")
-        FormattedLastAccessTime = $_.LastAccessTime.ToString("yyyy-MM-ddTHH:mm:ss (dddd)")
-    }
-}
-#endregion
-
-#region Define Remove-Diacritics function to simplify strings
-function Remove-Diacritics {
-    param (
-        [string]$inputString
-    )
-    # Normalize the string to Form D (NFD), which decomposes characters like ē to e + ˉ
-    $normalized = $inputString.Normalize([System.Text.NormalizationForm]::FormD)
-    # Remove all non-spacing marks (diacritics)
-    $cleaned = -join ($normalized.ToCharArray() | Where-Object { [System.Globalization.CharUnicodeInfo]::GetUnicodeCategory($_) -ne 'NonSpacingMark' })
-    return $cleaned
 }
 #endregion
 
@@ -181,17 +158,12 @@ if ($SearchOption -eq "Search by Day") {
         $_.CreationTime.DayOfWeek.ToString() -eq $DayOfWeek -or $_.Day -eq $DayOfWeek
     }
 } elseif ($SearchOption -eq "Search by File Name") {
-    $searchPattern = Remove-Diacritics -inputString $SearchText
+    $searchPattern = $SearchText
     $filteredFileDetails = $fileDetails | Where-Object {
-        # Normalize the name and path for comparison
-        $cleanName = Remove-Diacritics -inputString $_.Name
-        $cleanPath = Remove-Diacritics -inputString $_.FullName
-        # Use wildcard matching
-        $cleanName -like "*$searchPattern*" -or $cleanPath -like "*$searchPattern*"
+        $_.Name -like "*$searchPattern*" -or $_.FullName -like "*$searchPattern*"
     }
 }
 #endregion
-
 
 #region Sort and write results
 $sortedFileDetails = $filteredFileDetails | Sort-Object -Property CreationTime
